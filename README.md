@@ -20,7 +20,12 @@ AccessVision is a tool that uses computer vision and DOM analysis to audit web p
      ```bash
      pip install -r requirements.txt
      ```
-   - Download the YOLO model file (`best.pt`) and place it in the AccessVision folder.
+    - Download the YOLO model file (`best.pt`) and place it in the `AccessVision` folder.
+       - Google Drive link (model weights): https://drive.google.com/file/d/1BLA_o1dAyVe5fiIF1RqXTlMpeUzc5BFd/view?usp=sharing
+       - Optional: download via `gdown` (install with `pip install gdown`) using the file id:
+          ```bash
+          gdown --id 1BLA_o1dAyVe5fiIF1RqXTlMpeUzc5BFd -O best.pt
+          ```
 
 2. **Start the app**
    - From the `AccessVision` directory, run:
