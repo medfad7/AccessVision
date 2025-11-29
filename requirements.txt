@@ -1,0 +1,7 @@
+ultralytics
+selenium
+webdriver-manager
+streamlit
+pillow
+numpy
+pandas
