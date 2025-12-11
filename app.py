@@ -256,12 +256,15 @@ if not st.session_state.show_results and run_btn and url:
         progress_placeholder.progress(0)
         status_placeholder.info("🧠 Loading model and navigating to page...")
         
+        # Generate unique audit ID based on timestamp to prevent overwriting cached images
+        audit_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         # Run per-device audit (desktop, iPad, mobile)
         try:
             results = auditor.audit_url(normalized_url, progress_callback=lambda msg, pct: (
                 progress_placeholder.progress(pct),
                 status_placeholder.info(msg)
-            ))
+            ), audit_id=audit_id)
             st.session_state.audit_failed = False
         except Exception as e:
             # Mark that the audit failed so UI can show an appropriate message

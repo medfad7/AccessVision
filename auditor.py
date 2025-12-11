@@ -1,5 +1,7 @@
 import os
 import time
+import io
+import base64
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -17,9 +19,10 @@ class AccessAuditor:
             print(f"❌ Error loading model: {e}")
             raise e
 
-    def audit_url(self, url, output_folder="audit_results", progress_callback=None, devices=None):
+    def audit_url(self, url, output_folder="audit_results", progress_callback=None, devices=None, audit_id=None):
         """Audit a URL across multiple device viewports. Returns a dict mapping device -> {findings, img_path}.
         By default audits ['desktop','ipad','mobile'].
+        audit_id: optional unique identifier for this audit (used in filenames to prevent overwriting).
         """
         if devices is None:
             devices = ['desktop', 'ipad', 'mobile']
@@ -37,7 +40,7 @@ class AccessAuditor:
                 return device_progress
 
             device_progress_cb = make_device_progress(idx)
-            findings, annotated_path = self._audit_for_device(url, device, output_folder=output_folder, progress_callback=device_progress_cb)
+            findings, annotated_path, screenshot_path = self._audit_for_device(url, device, output_folder=output_folder, progress_callback=device_progress_cb, audit_id=audit_id)
             # After device completes, ensure progress is set to the device boundary
             if progress_callback:
                 progress_callback(f"Completed {device} audit", float(idx + 1) / total)
@@ -45,12 +48,12 @@ class AccessAuditor:
             results[device] = {
                 'findings': findings,
                 'annotated_path': annotated_path,
-                'screenshot': os.path.join(output_folder, f"screenshot_{device}.png")
+                'screenshot': screenshot_path
             }
         return results
 
-    def _audit_for_device(self, url, device, output_folder="audit_results", progress_callback=None):
-        """Audit a single device viewport (internal helper). Returns (findings, annotated_path)."""
+    def _audit_for_device(self, url, device, output_folder="audit_results", progress_callback=None, audit_id=None):
+        """Audit a single device viewport (internal helper). Returns (findings, annotated_path, screenshot_path)."""
         if not os.path.exists(output_folder): 
             os.makedirs(output_folder)
 
@@ -62,8 +65,10 @@ class AccessAuditor:
 
         update_progress(f"🌍 Navigating to: {url}", 0.05)
         findings = []
-        screenshot_path = f"{output_folder}/screenshot_{device}.png"
-        annotated_path = f"{output_folder}/annotated_{device}.png"
+        # Use audit_id in filenames to make them unique per audit
+        id_suffix = f"_{audit_id}" if audit_id else ""
+        screenshot_path = f"{output_folder}/screenshot_{device}{id_suffix}.png"
+        annotated_path = f"{output_folder}/annotated_{device}{id_suffix}.png"
 
         # Map device to initial window size (width,height)
         device_sizes = {
@@ -176,18 +181,34 @@ class AccessAuditor:
             
             update_progress(f"📏 Page height: {total_height}px, Viewport: {viewport_width}x{viewport_height}px", 0.10)
             
-            # Capture single full-page screenshot using Chrome's built-in functionality
-            # This captures everything in one go - no stitching needed!
+            # Use Chrome DevTools Protocol to capture full-page screenshot properly
+            # This avoids window size limits and stitching issues (sticky elements)
             driver.execute_script("window.scrollTo(0, 0)")
             time.sleep(0.5)
             
-            # Get full page screenshot (Chrome can do this natively)
-            # Set window size to full page height temporarily
-            original_size = driver.get_window_size()
-            driver.set_window_size(viewport_width, total_height)
-            time.sleep(1)  # Let page re-render
+            # Get page metrics for CDP screenshot
+            metrics = driver.execute_cdp_cmd('Page.getLayoutMetrics', {})
+            content_size = metrics['contentSize']
             
-            driver.save_screenshot(screenshot_path)
+            # Capture full-page screenshot using CDP
+            screenshot_config = {
+                'captureBeyondViewport': True,
+                'clip': {
+                    'width': content_size['width'],
+                    'height': content_size['height'],
+                    'x': 0,
+                    'y': 0,
+                    'scale': 1
+                }
+            }
+            
+            result = driver.execute_cdp_cmd('Page.captureScreenshot', screenshot_config)
+            
+            # Decode and save the screenshot
+            screenshot_data = base64.b64decode(result['data'])
+            with open(screenshot_path, 'wb') as f:
+                f.write(screenshot_data)
+            
             update_progress(f"✅ Full-page screenshot captured: {screenshot_path}", 0.15)
             
             # DON'T restore window size yet - we need it at full-page size for DOM queries
@@ -283,8 +304,8 @@ class AccessAuditor:
                 draw.text((det['x1'], det['y1']-15), f"#{i} {det['label']}", 
                          fill='red', font=font)
             
-            debug_img.save(os.path.join(output_folder, f"all_detections_before_dedup_{device}.png"))
-            print(f"💾 Saved all {len(all_detections)} raw detections to all_detections_before_dedup_{device}.png")
+            debug_img.save(os.path.join(output_folder, f"all_detections_before_dedup_{device}{id_suffix}.png"))
+            print(f"💾 Saved all {len(all_detections)} raw detections to all_detections_before_dedup_{device}{id_suffix}.png")
             
             # Deduplicate detections using IoU (Intersection over Union)
             # Sort by area (smallest first) - tighter boxes are more accurate than loose ones
@@ -445,9 +466,6 @@ class AccessAuditor:
                 if len(all_dom_elements) > 0:
                     print(f"🔍 DEBUG: First element sample: {all_dom_elements[0]}")
                 update_progress(f"✅ Found {len(all_dom_elements)} interactive elements in DOM", 0.70)
-                
-                # Now we can restore original window size (DOM data already collected)
-                driver.set_window_size(original_size['width'], original_size['height'])
                 
             except Exception as e:
                 print(f"⚠️ Error querying DOM elements: {e}")
@@ -834,9 +852,9 @@ class AccessAuditor:
             print(f"Error: {e}")
             if progress_callback:
                 progress_callback(f"❌ Error: {e}", 1.0)
-            return [], None
+            return [], None, None
         finally:
             driver.quit()
             
         update_progress("✅ Audit complete!", 1.0)
-        return findings, annotated_path
+        return findings, annotated_path, screenshot_path
