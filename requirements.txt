@@ -1,3 +1,4 @@
+opencv-python-headless
 ultralytics
 selenium
 webdriver-manager

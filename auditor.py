@@ -105,8 +105,16 @@ class AccessAuditor:
             chrome_options.add_experimental_option('mobileEmulation', mobile_emulation)
         
         # Initialize driver
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # Try to use system chromium-driver first (for Streamlit Cloud), fall back to ChromeDriverManager
+        try:
+            # Streamlit Cloud: use system chromium
+            chrome_options.binary_location = "/usr/bin/chromium"
+            service = Service("/usr/bin/chromedriver")
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except:
+            # Local development: use ChromeDriverManager
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
         
         try:
             driver.get(url)
